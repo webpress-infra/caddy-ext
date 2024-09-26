@@ -45,7 +45,7 @@ func (fb *Fail2Ban) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	err := next.ServeHTTP(recorder, r)
 
 	statusCode := recorder.Status()
-
+	fb.logger.Info("Request processed", zap.String("ip", clientIP), zap.Int("status_code", statusCode))
 	if statusCode == http.StatusNotFound {
 		fb.register404Attempt(clientIP)
 	} else {
