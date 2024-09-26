@@ -44,11 +44,17 @@ func (fb *Fail2Ban) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 
+	// Use ResponseRecorder to capture the status code from downstream handlers
+	recorder := caddyhttp.NewResponseRecorder(w, nil, nil)
+
 	// Call the next handler in the chain
-	err := next.ServeHTTP(w, r)
-	fb.logger.Info("Request", zap.String("ip", clientIP), zap.String("status", w.Header().Get("X-Status")))
-	// Check for 404 response
-	if err == nil && w.Header().Get("X-Status") == "404" {
+	err := next.ServeHTTP(recorder, r)
+
+	// Check the recorded status code
+	statusCode := recorder.Status()
+
+	// If the status code is 404, register the failed attempt
+	if statusCode == http.StatusNotFound {
 		fb.register404Attempt(clientIP)
 	} else {
 		// Reset attempts on successful request
