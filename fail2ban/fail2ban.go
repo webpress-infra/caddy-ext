@@ -120,7 +120,7 @@ func (fb *Fail2Ban) Provision(ctx caddy.Context) error {
 
 	// Get the logger from Caddy's context
 	fb.logger = ctx.Logger(fb) // Get a logger instance for the Fail2Ban handler
-
+	fb.logger.Info("Fail2Ban plugin provisioned")
 	return nil
 }
 
