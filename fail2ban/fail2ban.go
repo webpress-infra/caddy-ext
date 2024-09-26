@@ -14,15 +14,17 @@ func init() {
 	caddy.RegisterModule(Fail2Ban{})
 }
 
+var (
+	failedAttempts = make(map[string]int)
+	bannedIPs      = make(map[string]time.Time)
+	four04Attempts = make(map[string]int)
+	mu             sync.Mutex
+	logger         *zap.Logger
+)
+
 type Fail2Ban struct {
 	MaxFailedAttempts int `json:"max_failed_attempts,omitempty"`
 	BanDuration       int `json:"ban_duration,omitempty"`
-
-	failedAttempts map[string]int
-	bannedIPs      map[string]time.Time
-	four04Attempts map[string]int
-	mu             sync.Mutex
-	logger         *zap.Logger
 }
 
 func (Fail2Ban) CaddyModule() caddy.ModuleInfo {
@@ -35,7 +37,7 @@ func (Fail2Ban) CaddyModule() caddy.ModuleInfo {
 func (fb *Fail2Ban) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	clientIP := r.RemoteAddr
 
-	if fb.isIPBanned(clientIP) {
+	if isIPBanned(clientIP) {
 		http.Error(w, "Access Denied", http.StatusForbidden)
 		return nil
 	}
@@ -46,39 +48,39 @@ func (fb *Fail2Ban) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 	statusCode := recorder.Status()
 	if statusCode == http.StatusNotFound {
-		fb.register404Attempt(clientIP)
+		register404Attempt(clientIP, fb.MaxFailedAttempts, fb.BanDuration)
 	} else {
-		fb.resetFailedAttempts(clientIP)
-		fb.reset404Attempts(clientIP)
+		resetFailedAttempts(clientIP)
+		reset404Attempts(clientIP)
 	}
 
 	return err
 }
 
-func (fb *Fail2Ban) register404Attempt(ip string) {
-	fb.mu.Lock()
-	defer fb.mu.Unlock()
+func register404Attempt(ip string, maxFailedAttempts, banDuration int) {
+	mu.Lock()
+	defer mu.Unlock()
 
-	fb.four04Attempts[ip]++
+	four04Attempts[ip]++
 
-	if fb.four04Attempts[ip] >= fb.MaxFailedAttempts {
-		fb.bannedIPs[ip] = time.Now().Add(time.Duration(fb.BanDuration) * time.Second)
-		delete(fb.four04Attempts, ip)
+	if four04Attempts[ip] >= maxFailedAttempts {
+		bannedIPs[ip] = time.Now().Add(time.Duration(banDuration) * time.Second)
+		delete(four04Attempts, ip)
 
-		if fb.logger != nil {
-			fb.logger.Info("Banning IP due to too many 404 attempts", zap.String("ip", ip))
+		if logger != nil {
+			logger.Info("Banning IP due to too many 404 attempts", zap.String("ip", ip))
 		}
 	}
 }
 
-func (fb *Fail2Ban) isIPBanned(ip string) bool {
-	fb.mu.Lock()
-	defer fb.mu.Unlock()
+func isIPBanned(ip string) bool {
+	mu.Lock()
+	defer mu.Unlock()
 
-	banEndTime, banned := fb.bannedIPs[ip]
+	banEndTime, banned := bannedIPs[ip]
 	if banned {
 		if time.Now().After(banEndTime) {
-			delete(fb.bannedIPs, ip)
+			delete(bannedIPs, ip)
 			return false
 		}
 		return true
@@ -86,27 +88,25 @@ func (fb *Fail2Ban) isIPBanned(ip string) bool {
 	return false
 }
 
-func (fb *Fail2Ban) resetFailedAttempts(ip string) {
-	fb.mu.Lock()
-	defer fb.mu.Unlock()
+func resetFailedAttempts(ip string) {
+	mu.Lock()
+	defer mu.Unlock()
 
-	delete(fb.failedAttempts, ip)
+	delete(failedAttempts, ip)
 }
 
-func (fb *Fail2Ban) reset404Attempts(ip string) {
-	fb.mu.Lock()
-	defer fb.mu.Unlock()
+func reset404Attempts(ip string) {
+	mu.Lock()
+	defer mu.Unlock()
 
-	delete(fb.four04Attempts, ip)
+	delete(four04Attempts, ip)
 }
 
 func (fb *Fail2Ban) Provision(ctx caddy.Context) error {
-	fb.failedAttempts = make(map[string]int)
-	fb.bannedIPs = make(map[string]time.Time)
-	fb.four04Attempts = make(map[string]int)
-
-	fb.logger = ctx.Logger()
-	fb.logger.Info("Fail2Ban plugin provisioned")
+	if logger == nil {
+		logger = ctx.Logger()
+		logger.Info("Fail2Ban plugin provisioned as singleton")
+	}
 	return nil
 }
 
